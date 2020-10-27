@@ -73,7 +73,7 @@ def cmd_grab(conn: socket.socket, fname: str):
             buf = f.read()
     except (FileNotFoundError, PermissionError) as e:
         raise IOError("unable to read file") from e
-    return [len(fname), buf]
+    return [len(buf), buf]
 
 
 @deserialise(str, int)

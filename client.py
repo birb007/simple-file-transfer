@@ -83,7 +83,6 @@ def cmd_grab(conn: socket.socket, fin: str, fout: str) -> None:
     check_status(conn)
 
     size = int(_decode_chunk(conn))
-    print(size)
 
     with open(fout, "wb") as f:
         for chunk in utils.recv_n(conn, size):
