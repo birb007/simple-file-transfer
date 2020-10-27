@@ -1,10 +1,15 @@
 class BadResponse(Exception):
-    pass
+    def __init__(self, message):
+        super().__init__(message)
 
 
 class RequestFailure(Exception):
-    pass
+    def __init__(self, message, reason):
+        super().__init__(message)
+        self.reason = reason
 
 
 class BadRequest(Exception):
-    pass
+    def __init__(self, message):
+        super().__init__(message)
+        self.message = message

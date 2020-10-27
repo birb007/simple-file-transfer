@@ -36,8 +36,8 @@ def check_status(conn: socket.socket) -> None:
     """
     status = _decode_chunk(conn).decode()
     if status != "OK":
-        reason = _decode_chunk(conn)
-        raise exc.RequestFailure(f"[{status}]: {reason}")
+        reason = _decode_chunk(conn).decode()
+        raise exc.RequestFailure(status, reason)
 
 
 def cmd_list(conn: socket.socket) -> None:
@@ -60,7 +60,11 @@ def cmd_list(conn: socket.socket) -> None:
 
 
 def cmd_grab(conn: socket.socket, fin: str, fout: str) -> None:
-    """Send GRAB command to server.
+    """Send GRAB command to server to download file.
+
+    Read file in `CHUNK_SIZE` chunks against a running total then write to the
+    file to avoid trailing bytes that may be included as part of the payload
+    encoding.
 
     Args:
         conn: Connection to server.
@@ -70,14 +74,21 @@ def cmd_grab(conn: socket.socket, fin: str, fout: str) -> None:
     Raises:
         exc.RequestFailure: Response indicates failure.
         exc.InvalidResponse: Response is invalid.
+        ValueError: Either fin or fout contains an invalid character.
     """
+    CHUNK_SIZE = 4096
+
+    if not utils.is_valid_name(fin) or not utils.is_valid_name(fout):
+        raise ValueError("invalid filename")
+
     conn.send(utils.encode(["GRAB", fin]))
-
-    fsize = int(_decode_chunk(conn))
-    with open(fout, "wb") as f:
-        f.write(conn.recv(fsize))
-
     check_status(conn)
+
+    size = int(_decode_chunk(conn))
+
+    with open(fout, "wb") as f:
+        for chunk in utils.recv_n(conn, size):
+            f.write(chunk)
 
 
 def cmd_push(conn: socket.socket, fin: str, fout: str) -> None:
@@ -91,26 +102,30 @@ def cmd_push(conn: socket.socket, fin: str, fout: str) -> None:
     Raises:
         IOError: Unable to read file locally.
         exc.RequestFailure: Response indicates failure.
+        ValueError: Either fin or fout contains an invalid character.
     """
+    if not utils.is_valid_name(fin) or not utils.is_valid_name(fout):
+        raise ValueError("invalid filename")
+
     try:
         with open(fin, "rb") as f:
             payload = f.read()
     except (FileNotFoundError, PermissionError) as e:
-        raise IOError(f"unable to read file: {fin}", file=sys.stderr) from e
+        print("failure")
+        raise IOError(f"unable to read file: {fin}") from e
 
     conn.send(utils.encode(["PUSH", fout, os.path.getsize(fin), payload]))
     check_status(conn)
 
 
-def create_client(saddr: str, sport: int) -> None:
+def create_client(saddr: str, sport: int, is_v6: bool = False) -> None:
     """Create connection to server.
 
     Args:
         saddr: Server address.
         sport: Server port.
     """
-    s = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
-    s.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+    s = socket.socket([socket.AF_INET, socket.AF_INET6][is_v6], socket.SOCK_STREAM)
     s.connect((saddr, sport))
     return s
 
@@ -135,9 +150,15 @@ def main(argc: int, argv) -> None:
         sys.exit(1)
 
     try:
-        with create_client(saddr, sport) as client:
+        with create_client(saddr, sport, ":" in saddr) as client:
             handler(client, *args)
-    except TypeError:
+    except exc.RequestFailure as e:
+        print(f"server failed to execute command: {e.reason}")
+        sys.exit(1)
+    except ValueError as e:
+        print(f"error: {e.args[0]}", file=sys.stderr)
+        sys.exit(1)
+    except TypeError as e:
         print("invalid command arguments", file=sys.stderr)
     except ConnectionRefusedError:
         print("unable to connect to server", file=sys.stderr)
@@ -146,7 +167,7 @@ def main(argc: int, argv) -> None:
         print("server disconnected", file=sys.stderr)
         sys.exit(1)
     except IOError as e:
-        print(f"an IO error occured: {e.message}", file=sys.stderr)
+        print(f"an IO error occured: {e.args[0]}", file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
         print(f"closing client", file=sys.stderr)

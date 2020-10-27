@@ -21,7 +21,7 @@ def deserialise(*types):
         try:
             return handler[t](x)
         except ValueError as e:
-            raise exc.BadRequest("bad request") from e
+            raise exc.BadRequest("invalid payload encoding") from e
 
     def _inner(f):
         def _f(conn):
@@ -30,7 +30,7 @@ def deserialise(*types):
                 args.append(convert(type_, chunk))
 
             if len(args) != len(types):
-                raise exc.BadRequest("bad request")
+                raise exc.BadRequest("improper command arguments")
             return f(conn, *args)
 
         return _f
@@ -40,6 +40,8 @@ def deserialise(*types):
 
 def cmd_list(conn: socket.socket):
     """List all files in current working directory.
+
+    Produce a generator of: fname1, fsize1, fname2, fsize2, ...
 
     Args:
         conn: Client connection.
@@ -53,24 +55,32 @@ def cmd_list(conn: socket.socket):
 def cmd_grab(conn: socket.socket, fname: str):
     """Read and upload file to client.
 
+    Read file contents into buffer and return with its size in a list.
+
     Args:
         conn: Client connection.
         fname: Name of file to upload.
 
     Raises:
         IOError: Unable to read file locally.
+        exc.BadRequest: fname contains an invalid character.
     """
+    if not utils.is_valid_name(fname):
+        raise exc.BadRequest("invalid filename")
+
     try:
         with open(fname, "rb") as f:
             buf = f.read()
     except (FileNotFoundError, PermissionError) as e:
         raise IOError("unable to read file") from e
-    return [os.path.getsize(fname), buf]
+    return [len(fname), buf]
 
 
 @deserialise(str, int)
 def cmd_push(conn: socket.socket, fname, size):
     """Read and download file from client.
+
+    Read file contents from client then write.
 
     Args:
         conn: Client connection.
@@ -79,16 +89,24 @@ def cmd_push(conn: socket.socket, fname, size):
     Raises:
         ValueError: invalid file size.
         IOError: Unable to write to file locally.
+        exc.BadRequest: filename contains invalid character.
     """
+    if not utils.is_valid_name(fname):
+        raise exc.BadRequest("invalid filename")
+
     try:
         size = int(size)
         assert size >= 0
     except (ValueError, AssertionError) as e:
         raise ValueError("invalid file size") from e
 
+    if os.path.exists(fname):
+        raise exc.BadRequest("file already exists")
+
     try:
         with open(fname, "wb") as f:
-            f.write(conn.recv(size))
+            for chunk in utils.recv_n(conn, size):
+                f.write(chunk)
     except (FileNotFoundError, PermissionError) as e:
         raise IOError("unable to write file") from e
 
@@ -106,12 +124,20 @@ def manage_client(conn: socket.socket, cmd: str) -> None:
     except KeyError as e:
         raise exc.BadRequest("invalid command") from e
 
+    failure = True
     try:
-        conn.send(utils.encode(["OK", handler(conn)]))
+        results = ["OK", handler(conn)]
+        failure = False
     except ConnectionResetError:
         raise
+    except (OSError, IOError) as e:
+        results = ["KO", e.args[0]]
     except Exception as e:
-        conn.send(utils.decode(["KO", e.message]))
+        results = ["KO", e.message]
+    finally:
+        conn.send(utils.encode(results))
+
+    print("[*] {} {} {} {}".format(*conn.getpeername()[:2], ["OK", "KO"][failure], cmd))
 
 
 def create_server(sport: int, sdir: str, n_conn: int = 1) -> socket.socket:
@@ -132,9 +158,9 @@ def manage_connections(server: socket.socket) -> None:
     Args:
         server: Server socket.
     """
+    print("server up and running {0} {1}".format(*server.getsockname()))
     while True:
         conn, addr = server.accept()
-        print(f"new connection from {addr[0]}")
         try:
             manage_client(conn)
         except ConnectionResetError:
@@ -144,11 +170,13 @@ def manage_connections(server: socket.socket) -> None:
 
 
 def main(argc: int, argv) -> None:
-    if argc < 3:
-        print(f"usage: {argv[0]} <port> <dir>", file=sys.stderr)
+    if argc == 2:
+        sport, sdir = argv[1], "."
+    elif argc < 3:
+        print(f"usage: {argv[0]} <port> <?dir>", file=sys.stderr)
         sys.exit(1)
-
-    sport, sdir = argv[1:]
+    else:
+        sport, sdir = argv[1:]
 
     try:
         sport = int(sport)
