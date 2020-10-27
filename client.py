@@ -76,15 +76,14 @@ def cmd_grab(conn: socket.socket, fin: str, fout: str) -> None:
         exc.InvalidResponse: Response is invalid.
         ValueError: Either fin or fout contains an invalid character.
     """
-    CHUNK_SIZE = 4096
-
-    if not utils.is_valid_name(fin) or not utils.is_valid_name(fout):
+    if not utils.is_valid_name(fout):
         raise ValueError("invalid filename")
 
     conn.send(utils.encode(["GRAB", fin]))
     check_status(conn)
 
     size = int(_decode_chunk(conn))
+    print(size)
 
     with open(fout, "wb") as f:
         for chunk in utils.recv_n(conn, size):
@@ -104,7 +103,7 @@ def cmd_push(conn: socket.socket, fin: str, fout: str) -> None:
         exc.RequestFailure: Response indicates failure.
         ValueError: Either fin or fout contains an invalid character.
     """
-    if not utils.is_valid_name(fin) or not utils.is_valid_name(fout):
+    if not utils.is_valid_name(fout):
         raise ValueError("invalid filename")
 
     try:

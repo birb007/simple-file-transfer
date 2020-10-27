@@ -119,11 +119,12 @@ def manage_client(conn: socket.socket, cmd: str) -> None:
         conn: Client connection.
         cmd: Command to execute.
     """
+    peername = conn.getpeername()[:2]
+
     try:
         handler = {"LIST": cmd_list, "GRAB": cmd_grab, "PUSH": cmd_push}[cmd]
     except KeyError as e:
         raise exc.BadRequest("invalid command") from e
-
     failure = True
     try:
         results = ["OK", handler(conn)]
@@ -137,7 +138,7 @@ def manage_client(conn: socket.socket, cmd: str) -> None:
     finally:
         conn.send(utils.encode(results))
 
-    print("[*] {} {} {} {}".format(*conn.getpeername()[:2], ["OK", "KO"][failure], cmd))
+    print("[*] {} {} {} {}".format(*peername, ["OK", "KO"][failure], cmd))
 
 
 def create_server(sport: int, sdir: str, n_conn: int = 1) -> socket.socket:
