@@ -77,7 +77,7 @@ def cmd_grab(conn: socket.socket, fname: str):
 
 
 @deserialise(str, int)
-def cmd_push(conn: socket.socket, fname, size):
+def cmd_push(conn: socket.socket, fname: str, size: int):
     """Read and download file from client.
 
     Read file contents from client then write.
@@ -167,7 +167,7 @@ def manage_connections(server: socket.socket) -> None:
         except ConnectionResetError:
             print("client disconnected")
             continue
-        conn.close()
+        conn.shutdown()
 
 
 def main(argc: int, argv) -> None:
